@@ -64,6 +64,7 @@ function constructWithRoute(
     contextBaseUrl?: string
     entryBaseUrl?: string
     internal?: NonNullable<Context['loader']['internal']>
+    connection?: unknown
   } = {},
 ): { context: Context; service: ClientModuleRegistry; route: WebRoute } {
   const ctx = new Context()
@@ -91,6 +92,7 @@ function constructWithRoute(
     tapIndex: () => () => {},
   }
   ctx.provide('webServer', webServer as WebServer)
+  if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   const service = new ClientModuleRegistry(ctx)
   if (route === undefined) throw new Error('client bundle route was not registered')
   return { context: ctx, service, route }
@@ -102,27 +104,52 @@ function construct(packageNames: string[]): ClientModuleRegistry {
 }
 
 /** Invoke the registered plugin route and capture status, headers, and bytes. */
-async function routeRequest(route: WebRoute, url: string, method = 'GET'): Promise<{
+async function routeRequest(
+  route: WebRoute,
+  url: string,
+  method = 'GET',
+  headers?: Record<string, string>,
+): Promise<{
   status: number
   headers: Record<string, string> | undefined
   body: Buffer
 }> {
   let status = 0
-  let headers: Record<string, string> | undefined
+  let capturedHeaders: Record<string, string> | undefined
   let body = Buffer.alloc(0)
-  const response = {
-    writeHead(nextStatus: number, nextHeaders?: Record<string, string>) {
+  interface CapturingResponse {
+    statusCode: number
+    writeHead(nextStatus: number, nextHeaders?: Record<string, string>): unknown
+    end(chunk?: Uint8Array): unknown
+  }
+  const response: CapturingResponse = {
+    statusCode: 0,
+    writeHead(nextStatus, nextHeaders) {
+      this.statusCode = nextStatus
       status = nextStatus
-      headers = nextHeaders
+      capturedHeaders = nextHeaders
       return response
     },
-    end(chunk?: Uint8Array) {
+    end(chunk) {
+      if (status === 0) status = this.statusCode
       body = chunk === undefined ? Buffer.alloc(0) : Buffer.from(chunk)
       return response
     },
-  } as unknown as ServerResponse
-  await route.handler({ method, url } as IncomingMessage, response)
-  return { status, headers, body }
+  }
+  const request = { method, url, ...(headers !== undefined ? { headers } : {}) } as IncomingMessage
+  await route.handler(request, response as unknown as ServerResponse)
+  return { status, headers: capturedHeaders, body }
+}
+
+/** A composition connection service stub: the host fence plus one trusted cookie. */
+function stubConnectionFence() {
+  return {
+    requestRejection(request: { readonly headers: IncomingMessage['headers'] }): 401 | 403 | undefined {
+      const headers = (request.headers ?? {}) as Record<string, string | undefined>
+      if (headers['host'] !== 'app.example:3080') return 403
+      return headers['cookie'] === 'session=trusted' ? undefined : 401
+    },
+  }
 }
 
 /** Execute the exact first inline script emitted by the Host boot rows. */
@@ -841,5 +868,54 @@ describe('module graph order', () => {
     writeBuiltPackage('@fixture/cycle-b', { external: ['@fixture/cycle-a'] })
     expect(() => construct(['@fixture/cycle-a', '@fixture/cycle-b']))
       .toThrow('module graph cycle @fixture/cycle-a -> @fixture/cycle-b -> @fixture/cycle-a')
+  })
+})
+
+describe('bundle route trust fence', () => {
+  it('serves an out-of-repo bundle row to a request the fence accepts', async () => {
+    const packageName = '@fixture/fence-accepted'
+    writeBuiltPackage(packageName, {})
+    const { service, route } = constructWithRoute([packageName], { connection: stubConnectionFence() })
+    const row = service.graph().entries[0]!
+    const accepted = await routeRequest(route, row.url, 'GET', {
+      host: 'app.example:3080',
+      cookie: 'session=trusted',
+    })
+    expect(accepted.status).toBe(200)
+    expect(accepted.body.toString('utf8')).toContain('module.exports = {}')
+  })
+
+  it('answers a fence refusal with that status and no bundle bytes', async () => {
+    const packageName = '@fixture/fence-unauthenticated'
+    writeBuiltPackage(packageName, {})
+    const { service, route } = constructWithRoute([packageName], { connection: stubConnectionFence() })
+    const row = service.graph().entries[0]!
+    const denied = await routeRequest(route, row.url, 'GET', {
+      host: 'app.example:3080',
+      cookie: 'session=stolen',
+    })
+    expect(denied.status).toBe(401)
+    expect(denied.body).toHaveLength(0)
+    expect(denied.headers).toBeUndefined()
+  })
+
+  it('holds a host-refused request at the fence instead of a 404 lookup', async () => {
+    const packageName = '@fixture/fence-host-refused'
+    writeBuiltPackage(packageName, {})
+    const { route } = constructWithRoute([packageName], { connection: stubConnectionFence() })
+    const denied = await routeRequest(route, `/plugins/??${packageName}/client.js&rev=stale`, 'GET', {
+      host: 'attacker.example',
+    })
+    expect(denied.status).toBe(403)
+    expect(denied.body).toHaveLength(0)
+  })
+
+  it('serves the route as before when the composition has no connection service', async () => {
+    const packageName = '@fixture/fence-less'
+    writeBuiltPackage(packageName, {})
+    const { service, route } = constructWithRoute([packageName])
+    const row = service.graph().entries[0]!
+    expect((await routeRequest(route, row.url)).status).toBe(200)
+    expect((await routeRequest(route, row.url.replace(`rev=${row.rev}`, 'rev=stale'))).status).toBe(404)
   })
 })
