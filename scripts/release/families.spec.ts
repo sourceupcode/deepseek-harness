@@ -289,6 +289,30 @@ describe('release families', () => {
     expect(() => { vendor.validatePayload(vendored, []) }).toThrow(/empty tarball/)
   })
 
+  it('refuses a dsh member whose packed payload leaves a declared export target absent', () => {
+    const dsh = releaseFamily('dsh')
+    const broken = member('packages/a/library', '@deepseek-ai/dsh-library', {
+      exports: {
+        '.': { types: './lib/types/index.d.ts', default: './lib/index.js' },
+        './client': { types: './lib/types/client/index.d.ts', default: './lib/client.js' },
+      },
+    })
+
+    expect(() => dsh.validatePayload(broken, [
+      'package/package.json',
+      'package/lib/index.js',
+      'package/lib/types/index.d.ts',
+      'package/lib/types/client/index.d.ts',
+    ])).toThrow('@deepseek-ai/dsh-library declares export target ./lib/client.js absent from its packed payload')
+    expect(() => dsh.validatePayload(broken, [
+      'package/package.json',
+      'package/lib/index.js',
+      'package/lib/client.js',
+      'package/lib/types/index.d.ts',
+      'package/lib/types/client/index.d.ts',
+    ])).not.toThrow()
+  })
+
   it('drives the installed entry only for the family that publishes one', () => {
     expect(releaseFamily('dsh').installedEntry).toEqual({ packageName: '@deepseek-ai/dsh', binPath: 'lib/bin.js' })
     expect(releaseFamily('vendor').installedEntry).toBeUndefined()

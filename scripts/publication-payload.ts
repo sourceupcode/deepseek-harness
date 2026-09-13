@@ -53,3 +53,70 @@ export function validateTarballPayload(files: readonly string[], context: string
     throw new Error(`${context} publishes source map ${file}`)
   }
 }
+
+/**
+ * The concrete export targets a manifest's `exports` field names.
+ *
+ * Wildcard subpaths (`./src/*` and kin) select no concrete target and are
+ * skipped: this repository's source subpaths exist for workspace consumers
+ * resolving through the package link, not as files a tarball carries.
+ * @param manifest - parsed manifest to read.
+ * @returns The payload-relative export targets, deduplicated.
+ */
+export function declaredExportTargets(manifest: unknown): string[] {
+  const root = manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)
+    ? undefined
+    : (manifest as Record<string, unknown>).exports
+  if (root === undefined) return []
+  if (typeof root === 'string') return [root]
+  if (typeof root !== 'object' || Array.isArray(root)) {
+    throw new Error(`manifest exports is not a string or a subpath map: ${String(typeof root)}`)
+  }
+  const targets = new Set<string>()
+  for (const [subpath, value] of Object.entries(root as Record<string, unknown>)) {
+    if (subpath.includes('*')) continue
+    if (typeof value === 'string') {
+      targets.add(value)
+      continue
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`manifest exports entry "${subpath}" is not a string or a condition map`)
+    }
+    for (const [condition, target] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof target !== 'string') {
+        throw new Error(`manifest exports entry "${subpath}" condition "${condition}" names no string target`)
+      }
+      targets.add(target)
+    }
+  }
+  return [...targets]
+}
+
+/**
+ * Every non-source export target a dsh family member declares must be present
+ * in its packed payload. The payload never publishes `src/` (see
+ * {@link isForbiddenPublicationFile}), so a source subpath or target is
+ * exempt: it serves the workspace consumer that resolves through the package
+ * link, and no tarball member can stand in for it.
+ *
+ * The check runs at pack, where `files` has already selected the payload: a
+ * member whose manifest points at an artifact its `files` field omits fails
+ * the release rehearsal instead of publishing a package whose export map
+ * dangles. External consumers are the reason the guarantee stands — a settings
+ * card built outside this repository resolves its types through these export
+ * targets, and a missing one is a silent break it cannot diagnose.
+ * @param manifest - the packed member's parsed manifest.
+ * @param files - every path inside the packed tarball.
+ * @param context - member name named in the failure.
+ */
+export function validateDeclaredExports(manifest: unknown, files: readonly string[], context: string): void {
+  const present = new Set(files.map(payloadPath))
+  for (const rawTarget of declaredExportTargets(manifest)) {
+    const target = payloadPath(rawTarget)
+    if (target === 'package.json') continue
+    if (target === 'src' || target.startsWith('src/')) continue
+    if (!present.has(target)) {
+      throw new Error(`${context} declares export target ${rawTarget} absent from its packed payload`)
+    }
+  }
+}
