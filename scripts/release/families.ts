@@ -16,7 +16,7 @@ import {
   readClientBuildRecord,
 } from '../client-build-environment.ts'
 import { PUBLIC_EXPERIMENTAL_PACKAGE_DIRECTORIES } from '../experimental-package-policy.ts'
-import { validateTarballPayload } from '../publication-payload.ts'
+import { validateDeclaredExports, validateTarballPayload } from '../publication-payload.ts'
 
 /**
  * Dependency sections a consumer must publish after, because npm resolves them
@@ -363,12 +363,16 @@ class DshFamily extends ReleaseFamily {
   }
 
   /**
-   * Reject source and declaration-map members, the repository's publication policy.
+   * Reject source and declaration-map members, the repository's publication
+   * policy, and export targets the packed payload leaves dangling: an
+   * external consumer resolving through the manifest's exports must find the
+   * file it names inside the package.
    * @param member - the packed member.
    * @param files - every path inside its tarball.
    */
   validatePayload(member: ReleaseMember, files: readonly string[]): void {
     validateTarballPayload(files, member.name)
+    validateDeclaredExports(member.manifest, files, member.name)
   }
 
   readonly installedEntry = { packageName: '@deepseek-ai/dsh', binPath: 'lib/bin.js' }

@@ -99,4 +99,4 @@ import { clientBundle } from '../tsdown.client.ts'
 export default clientBundle('@deepseek-ai/dsh-client-my-plugin', ['lib/types/index.js', 'lib/types/invariant.js'])
 ```
 
-没有已发布的预设暴露该包，因此本仓库之外的包得自行复刻同样的输出格式。bundle 纯净度门禁同时拒绝跨插件的值导入，所以卡片无法导入本分区的卡片外观或其暂存表单模型——它渲染自己的那一份，并自行拥有暂存与 revision 设栅。这两条限制都记在[本分区的已知限制](../../packages/client/ui-settings-plugins/README.zh.md#known-limitations-and-deferred-work)里。
+共享预设不是已发布的包，因此本仓库之外的浏览器半侧得自行复刻该工厂格式；它对着已发布的闭包构建——整个 `dsh-client-*` 集合随每个 `dsh-v*` 发布一同发布，且 pack 步骤会拒绝 export map 点名了自身 payload 缺失产物的成员（[闭包保证](../../.agents/notes/implemented/process/2026-09-13-pack-time-export-completeness.zh.md)）。bundle 纯净度门禁同时拒绝跨插件的值导入，所以卡片无法导入本分区的卡片外观或其暂存表单模型——它渲染自己的那一份，并自行拥有暂存与 revision 设栅。这两条限制都记在[本分区的已知限制](../../packages/client/ui-settings-plugins/README.zh.md#known-limitations-and-deferred-work)里。
