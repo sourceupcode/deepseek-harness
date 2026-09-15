@@ -7,7 +7,12 @@
  * contributes the registration facade, application preloads, bootstrap scripts,
  * and graph to the webserver's index injection table, and provides the
  * `clientModuleHost` service (the HMR node half's registration/notification
- * face).
+ * face). The `/plugins` route is a named webserver seat the app's index
+ * gate never decides: when the composition provides the connection service,
+ * every route request passes that service's Host/Origin and
+ * browser-authentication check before any bundle bytes are offered, so a
+ * bundle is served only where the app's own gate would serve the index; a
+ * composition without the service keeps the route unfenced.
  *
  * Scanning is incremental per package — there is no full-rescan code path.
  * Every cordis `internal/plugin` emission (fiber construction/disposal) marks
@@ -426,6 +431,11 @@ const CLIENT_MODULES_ID = '@deepseek-ai/dsh-client-modules'
 
 /** Dynamic bundles grouped into the parser bootstrap batch before the Vite shell. */
 const PARSER_PRELOAD_IDS = [CLIENT_MODULES_ID] as const
+
+/** The trust surface the bundle route reads; the browser-side connection package owns the full type. */
+interface ConnectionTrustFence {
+  requestRejection(request: { readonly headers: IncomingMessage['headers'] }): 401 | 403 | undefined
+}
 
 /**
  * The boot protocol as index injection rows. The inline registration queue
@@ -971,6 +981,36 @@ export class ClientModuleRegistry extends Service {
     this.notifyGraphChanged()
   }
 
+  /**
+   * The composition's bundle-route trust fence, or none.
+   *
+   * The read is per request, not route-registration time: a connection service
+   * activating after the route registers fences the route without a
+   * re-registration, and a composition that never provides it serves the
+   * route exactly as before this fence existed.
+   * @returns the fence, or undefined when the composition has no connection service.
+   */
+  private connectionFence(): ConnectionTrustFence | undefined {
+    const connection = Reflect.get(this.ctx, 'connection')
+    return connection === undefined ? undefined : (connection as ConnectionTrustFence)
+  }
+
+  /**
+   * Answer a fence refusal on the route's own response.
+   * @param req - the route request.
+   * @param res - response the route owns.
+   * @returns true when the request was refused and the response is closed.
+   */
+  private fenceBundleRequest(req: IncomingMessage, res: ServerResponse): boolean {
+    const fence = this.connectionFence()
+    if (fence === undefined) return false
+    const rejection = fence.requestRejection(req)
+    if (rejection === undefined) return false
+    res.statusCode = rejection
+    res.end()
+    return true
+  }
+
   private bundleResource(method: string | undefined, url: string): {
     status: number
     headers?: Record<string, string>
@@ -993,6 +1033,7 @@ export class ClientModuleRegistry extends Service {
   }
 
   private readonly serveBundle = (req: IncomingMessage, res: ServerResponse): void => {
+    if (this.fenceBundleRequest(req, res)) return
     /* v8 ignore next -- `?? '/'` arm: node:http always sets url on server requests. */
     const response = this.bundleResource(req.method, req.url ?? '/')
     res.writeHead(response.status, response.headers)

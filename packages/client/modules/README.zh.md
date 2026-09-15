@@ -35,7 +35,7 @@ kind: "package-reference"
 
 ### 浏览器加载什么
 
-application combo 脚本在启动时仅注册一次插件 factory；模块主体仍保持惰性，只在首次 import 或物化时运行。共享 combo URL 的 row 共用一个进行中的脚本任务。HMR（热模块替换）会让一条发生变化的 row 改用带 revision 的单资源 combo URL。`<id>/client` 与裸 id 解析到同一组导出，因为插件 bundle 就是其包的客户端半侧。
+application combo 脚本在启动时仅注册一次插件 factory；模块主体仍保持惰性，只在首次 import 或物化时运行。共享 combo URL 的 row 共用一个进行中的脚本任务。HMR（热模块替换）会让一条发生变化的 row 改用带 revision 的单资源 combo URL。`<id>/client` 与裸 id 解析到同一组导出，因为插件 bundle 就是其包的客户端半侧。这些 row 由 webserver 的 `/plugins` 座位提供，而应用的 index 门控从不决定该座位：组合提供 connection service 时，每个路由请求先通过该服务的 Host/Origin 与浏览器认证检查，bundle 只在应用自身门控会提供的地方才被提供；组合不提供该服务时，路由保持无围栏。
 
 ### 共享模块
 
